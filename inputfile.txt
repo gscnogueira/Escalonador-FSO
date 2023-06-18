@@ -1,0 +1,12 @@
+medium
+slow
+fast
+medium
+medium
+fast
+slow
+slow
+medium
+fast
+fast
+slow
