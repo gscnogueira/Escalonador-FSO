@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 #include "error.h"
 #include "process.h"
 #include "utils.h"
@@ -16,6 +17,7 @@ int main(int argc, char *argv[]){
     char line[TAM_LINHA];
     process_list_t plists[N_AUX];
     FILE *input_file = fopen(argv[1], "r");
+    struct timeval stop, start;
 
     if (argc != 2) {
         print_error("Número inválido de argumentos. Forneça apenas um parâmetro");
@@ -44,6 +46,7 @@ int main(int argc, char *argv[]){
         line_number++;
     }
 
+    gettimeofday(&start, NULL);
     for (int i = 0; i < N_AUX; i++){
 
         pid = fork();
@@ -65,6 +68,8 @@ int main(int argc, char *argv[]){
         for (int i = 0; i < N_AUX; i++){
             wait(&estado);
         }
+        gettimeofday(&stop, NULL);
+        printf("Tempo de turnaround: %lf segundos\n", ((stop.tv_sec - start.tv_sec)*1e6 + (stop.tv_usec - start.tv_usec))/1e6);
     }
     else {
         plexc(plists + p_aux_id, p_aux_id);
