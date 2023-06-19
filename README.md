@@ -8,4 +8,8 @@ Trabalho realizado na disciplina **Fundamentos de Sitemas Operacionais**  na **U
 
 ## Executando 
 
-    ./escalonador <arquivo>
+    Uso: ./escalonador <opção> <arquivo>
+
+    Opções:
+    -n, --normal:           Executa escalonador em modo normal.
+    -ws, --work-stealing:   Executa escalonador em modo work stealing.
