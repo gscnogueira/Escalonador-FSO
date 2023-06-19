@@ -34,6 +34,7 @@ slow: $(PROCDIR)/slow.c
 	$(CC) $(FLAGS) -o $(PROCDIR)/$@ $^
 
 run: $(BINARY)
-	./escalonador inputfile.txt
+	./escalonador -n inputfile.txt
+
 clear:
 	rm obj/*
