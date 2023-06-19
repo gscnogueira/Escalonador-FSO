@@ -4,6 +4,8 @@ Trabalho realizado na disciplina **Fundamentos de Sitemas Operacionais**  na **U
 
 ## Compilando 
 
+    git clone "https://github.com/gscnogueira/Escalonador-FSO.git"
+    cd Escalonador-FSO
     make
 
 ## Executando 
