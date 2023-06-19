@@ -25,6 +25,8 @@ void plprint(process_list_t* plist);
 
 int plexc(process_list_t* plist, int p_aux_id);
 
+int plexcws(process_list_t* plist, int p_aux_id);
+
 int pexc(process_t* p, int p_aux_id);
 
 #endif

@@ -97,4 +97,9 @@ int pexc(process_t* p, int p_aux_id){
 
 }
 
+int plexcws(process_list_t* plist, int p_aux_id){
+    // Função para executar work stealing
+    return 0;
+}
+
 
