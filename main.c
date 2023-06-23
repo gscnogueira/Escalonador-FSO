@@ -20,24 +20,29 @@ typedef struct process_list_t {
     process_t* back;
 } process_list_t;
 
+typedef struct {
+    process_list_t data[N_AUX];
+} proccess_list_array_t;
+
 
 void preproc_line(char* line);
 
 void print_error(char *error_msg);
 
+process_t* pinit(char* p_name);
+
+int pexc(process_t* p, int p_aux_id);
+
 void plinit(process_list_t* p_list);
 
 void plinsert(process_list_t* plist, process_t* p);
-
-process_t* pinit(char* p_name);
-
-void plprint(process_list_t* plist);
 
 int plexc(process_list_t* plist, int p_aux_id);
 
 int plexcws(process_list_t* plist, int p_aux_id);
 
-int pexc(process_t* p, int p_aux_id);
+void plprint(process_list_t* plist);
+
 
 int main(int argc, char *argv[]){
 
@@ -47,6 +52,7 @@ int main(int argc, char *argv[]){
     char line[TAM_LINHA];
     FILE *input_file;
     struct timeval stop, start;
+    proccess_list_array_t plists;
 
     if (argc < 3 ) {
         printf("Uso: %s <opção> <arquivo>\n\n", argv[0]);
@@ -73,11 +79,10 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
-    process_list_t plists[N_AUX];
 
     // inicializa as listas de processos
     for(int i = 0; i < N_AUX; i++)
-        plinit(plists + i);
+        plinit(plists.data + i);
 
 
     while (fgets(line, sizeof(line), input_file) != NULL){
@@ -86,10 +91,14 @@ int main(int argc, char *argv[]){
         // inicializa processo
         process_t *p = pinit(line);
         // insere o processo na lista de forma striped
-        plinsert(plists + (line_number%N_AUX), p);
+        plinsert(plists.data + (line_number%N_AUX), p);
 
         line_number++;
     }
+    plprint(plists.data);
+    plprint(plists.data + 1);
+    plprint(plists.data + 2);
+    plprint(plists.data + 3);
 
     gettimeofday(&start, NULL);
     for (int i = 0; i < N_AUX; i++){
@@ -117,10 +126,10 @@ int main(int argc, char *argv[]){
         printf("Tempo de turnaround: %lf segundos\n", ((stop.tv_sec - start.tv_sec)*1e6 + (stop.tv_usec - start.tv_usec))/1e6);
     }
     else if (mode == NORMAL) {
-        plexc(plists + p_aux_id, p_aux_id);
+        plexc(plists.data + p_aux_id, p_aux_id);
     }
     else if (mode == WORK_STEALING){
-        plexcws(plists + p_aux_id, p_aux_id);
+        plexcws(plists.data + p_aux_id, p_aux_id);
     }
 
     return 0;
@@ -168,10 +177,10 @@ void plprint(process_list_t* plist){
 
     process_t* current = plist->front;
 
-    printf("------\n");
+    printf("\n------\n");
     printf("Lista contém %d elementos\n", plist->size);
     while(current){
-        printf("%s", current->name);
+        printf("%s ", current->name);
         current=current->next;
     }
 }
@@ -191,8 +200,6 @@ int plexc(process_list_t* plist, int p_aux_id){
 int pexc(process_t* p, int p_aux_id){
 
     int state;
-    char path[] = "./processes/";
-
 
     printf("Aux %d:Executando %s\n",p_aux_id, p->name);
     pid_t pid = fork();
@@ -203,8 +210,7 @@ int pexc(process_t* p, int p_aux_id){
     }
 
     if(pid == 0){
-        strcat(path, p->name);
-        execl(path, p->name, NULL);
+        execl(p->name, p->name, NULL);
         print_error("Não foi possível executar o processo");
         return -1;
     }
