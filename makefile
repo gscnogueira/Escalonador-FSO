@@ -1,16 +1,7 @@
 CC=gcc
 BINARY=escalonador
-INCDIR=./includes
-CODEDIR=./src
-PROCDIR=./processes
-OBJDIR=./obj
-DEBUG=true
-CFILES=$(wildcard $(CODEDIR)/*.c)
-OBJFILES=$(patsubst $(CODEDIR)/%.c,$(OBJDIR)/%.o,$(CFILES))
-INCS = $(wildcard $(INCDIR)/*.h)
-FLAGS= -Wall -I$(INCDIR)
-
-$(shell mkdir -p $(OBJDIR))
+DEBUG=false
+FLAGS= -Wall
 
 ifeq ($(DEBUG),true)
 	FLAGS += -g
@@ -18,23 +9,18 @@ endif
 
 all: fast medium slow $(BINARY)
 
-$(BINARY):$(OBJFILES)
+$(BINARY): main.c
 	$(CC) $(FLAGS) -o $@ $^
 
-obj/%.o:$(CODEDIR)/%.c $(INCS)
-	$(CC) $(FLAGS) -c $< -o $@
+fast: fast.c
+	$(CC) $(FLAGS) -o $@ $^
 
-fast: $(PROCDIR)/fast.c
-	$(CC) $(FLAGS) -o $(PROCDIR)/$@ $^
+medium: medium.c
+	$(CC) $(FLAGS) -o $@ $^
 
-medium: $(PROCDIR)/medium.c
-	$(CC) $(FLAGS) -o $(PROCDIR)/$@ $^
-
-slow: $(PROCDIR)/slow.c
-	$(CC) $(FLAGS) -o $(PROCDIR)/$@ $^
+slow: slow.c
+	$(CC) $(FLAGS) -o $@ $^
 
 run: $(BINARY)
 	./escalonador -n inputfile.txt
 
-clear:
-	rm obj/*
