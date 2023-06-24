@@ -6,6 +6,9 @@
 #include <sys/ipc.h>
 #include<sys/shm.h>
 #include <string.h>
+#include <sys/sem.h>
+#include <errno.h>
+
 
 #define TAM_WORD  10
 #define TAM_LINHA 100
@@ -27,6 +30,38 @@ typedef struct {
 } process_list_array_t;
 
 
+struct sembuf operacao [2];
+int idsem;
+int quem=0;
+int semval;
+
+void p_sem(){
+
+    semval = semctl(idsem, 0, GETVAL);         // Obtenha o valor do semáforo
+
+    operacao[0].sem_num = 0;
+    operacao[0].sem_op = 0;
+    operacao[0].sem_flg = 0;
+
+    operacao[1].sem_num = 0;
+    operacao[1].sem_op = 1;
+    operacao[1].sem_flg = 0;
+    if (semop(idsem, operacao, 2) < 0)
+            printf("erro no p=%d\n", errno);
+
+    semval = semctl(idsem, 0, GETVAL);         // Obtenha o valor do semáforo
+}
+
+void v_sem(){
+    operacao[0].sem_num = 0;
+    operacao[0].sem_op = -1;
+    operacao[0].sem_flg = 0;
+    if (semop(idsem, operacao, 1) < 0)
+            printf("erro no p=%d\n", errno);
+}
+
+process_t steal(process_list_array_t* plists);
+
 void preproc_line(char* line);
 
 void print_error(char *error_msg);
@@ -43,7 +78,7 @@ void plremove(process_list_t* plist);
 
 int plexc(process_list_t* plist, int p_aux_id);
 
-int plexcws(process_list_t* plist, int p_aux_id);
+int plexcws(process_list_array_t* plists, int p_aux_id);
 
 void plprint(process_list_t* plist);
 
@@ -87,10 +122,15 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
-    if((idshm = shmget(0x1223, sizeof(int), IPC_CREAT | 0x1ff)) < 0){
-		printf("erro na criação de memória compartilhada\n");
+    if((idshm = shmget(0x1223, sizeof(process_list_array_t), IPC_CREAT | 0x1ff)) < 0){
+		printf("erro na criação de memória compartilhada\n\n");
         return 1;
 	}
+
+    if((idsem = semget(0x1223, 1, IPC_CREAT | 0x1ff)) < 0){
+        printf("erro na criação do semáforo\n");
+        exit(1);
+    }
 
     plists = (process_list_array_t*) shmat(idshm, NULL, 0);
 
@@ -106,15 +146,9 @@ int main(int argc, char *argv[]){
         process_t *p = pinit(line);
         // insere o processo na lista de forma striped
         plinsert(plists->data + (line_number%N_AUX), p);
-
         line_number++;
-    }
 
-    for(int i = 0; i < N_AUX; i++){
-        printf("Aux %d:",i);
-        plprint(plists->data + i);
     }
-
     gettimeofday(&start, NULL);
     for (int i = 0; i < N_AUX; i++){
 
@@ -139,10 +173,10 @@ int main(int argc, char *argv[]){
         }
         gettimeofday(&stop, NULL);
 
-        for(int i = 0; i < N_AUX; i++){
-            printf("Aux %d:",i);
-            plprint(plists->data + i);
-        }
+        // for(int i = 0; i < N_AUX; i++){
+        //     printf("Aux %d:",i);
+        //     plprint(plists->data + i);
+        // }
 
         shmctl(idshm, IPC_RMID, NULL);
 
@@ -154,8 +188,9 @@ int main(int argc, char *argv[]){
         if (mode == NORMAL) 
             plexc(plists->data + p_aux_id, p_aux_id);
 
-        if (mode == WORK_STEALING)
-            plexcws(plists->data + p_aux_id, p_aux_id);
+        if (mode == WORK_STEALING){
+            plexcws(plists,  p_aux_id);
+        }
 
         shmdt(plists); // detach da memória compartilhada
     }
@@ -253,6 +288,7 @@ int pexc(process_t* p, int p_aux_id){
     }
 
     if(pid == 0){
+        printf("%s",p->name);
         execl(p->name, p->name, NULL);
         print_error("Não foi possível executar o processo");
         return -1;
@@ -265,9 +301,68 @@ int pexc(process_t* p, int p_aux_id){
 
 }
 
-int plexcws(process_list_t* plist, int p_aux_id){
+int plexcws(process_list_array_t* plists, int p_aux_id){
+
     // Função para executar work stealing
+
+    int cont = 0;
+    process_list_t* plist = plists->data +p_aux_id;
+    while(1){
+        p_sem();
+        process_t* p = (plist->front);
+        if (p) {
+            plremove(plist);
+        } else {
+            v_sem();
+            break;
+        }
+        v_sem();
+        pexc(p, p_aux_id);
+        cont++;
+    }
+
+    printf("Aux %d terminou sua fila! (Executou %d)\n", p_aux_id, cont);
+
+    //escolher qual lista vai acessar
+
+    // process_t pchosen;
+    
+    // while ((pchosen = steal(plists)).name ) {
+    //     printf("Aux %d executando %s!\n", p_aux_id, pchosen.name);
+    //     pexc(&pchosen, p_aux_id);
+    // }
+
+    // nao deixar mais niguem acessar
+
+    // olhar as outras listas
+
     return 0;
+}
+
+process_t steal(process_list_array_t* plists){
+
+    int  tam, id_fila= -1;
+    
+    p_sem();
+
+    printf("---------------------\n");
+    for (int i = 0 ; i < N_AUX; i++){
+        tam = (plists->data + i)->size;
+        printf("Tam da lista %d: %d\n",i, tam);
+        if (tam){
+            id_fila = i;
+            // break;
+        }
+    }
+    
+    printf("Roubando de %d\n", id_fila);
+    process_list_t *plist = plists-> data + id_fila;
+    process_t p = *(plist->front);
+    plremove(plist);
+
+    v_sem();
+
+    return p;
 }
 
 

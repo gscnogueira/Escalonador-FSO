@@ -1,6 +1,6 @@
 CC=gcc
 BINARY=escalonador
-DEBUG=false
+DEBUG=true
 FLAGS= -Wall
 
 ifeq ($(DEBUG),true)
@@ -22,5 +22,4 @@ slow: slow.c
 	$(CC) $(FLAGS) -o $@ $^
 
 run: $(BINARY)
-	./escalonador -n inputfile.txt
-
+	./escalonador -ws inputfile.txt
