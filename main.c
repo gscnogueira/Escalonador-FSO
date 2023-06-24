@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <sys/wait.h>
 #include <sys/time.h>
+#include <sys/ipc.h>
+#include<sys/shm.h>
 #include <string.h>
 
 #define TAM_WORD  10
@@ -22,7 +24,7 @@ typedef struct process_list_t {
 
 typedef struct {
     process_list_t data[N_AUX];
-} proccess_list_array_t;
+} process_list_array_t;
 
 
 void preproc_line(char* line);
@@ -37,6 +39,8 @@ void plinit(process_list_t* p_list);
 
 void plinsert(process_list_t* plist, process_t* p);
 
+void plremove(process_list_t* plist);
+
 int plexc(process_list_t* plist, int p_aux_id);
 
 int plexcws(process_list_t* plist, int p_aux_id);
@@ -48,11 +52,15 @@ int main(int argc, char *argv[]){
 
     enum mode_t {NORMAL, WORK_STEALING};
     mode_t mode;
-    int estado, pid, line_number=0, p_aux_id=0; 
+    int estado,
+        idshm,
+        pid,
+        line_number=0,
+        p_aux_id=0; 
     char line[TAM_LINHA];
     FILE *input_file;
     struct timeval stop, start;
-    proccess_list_array_t plists;
+    process_list_array_t* plists;
 
     if (argc < 3 ) {
         printf("Uso: %s <opção> <arquivo>\n\n", argv[0]);
@@ -79,10 +87,16 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
+    if((idshm = shmget(0x1223, sizeof(int), IPC_CREAT | 0x1ff)) < 0){
+		printf("erro na criação de memória compartilhada\n");
+        return 1;
+	}
+
+    plists = (process_list_array_t*) shmat(idshm, NULL, 0);
 
     // inicializa as listas de processos
     for(int i = 0; i < N_AUX; i++)
-        plinit(plists.data + i);
+        plinit(plists->data + i);
 
 
     while (fgets(line, sizeof(line), input_file) != NULL){
@@ -91,14 +105,15 @@ int main(int argc, char *argv[]){
         // inicializa processo
         process_t *p = pinit(line);
         // insere o processo na lista de forma striped
-        plinsert(plists.data + (line_number%N_AUX), p);
+        plinsert(plists->data + (line_number%N_AUX), p);
 
         line_number++;
     }
-    plprint(plists.data);
-    plprint(plists.data + 1);
-    plprint(plists.data + 2);
-    plprint(plists.data + 3);
+
+    for(int i = 0; i < N_AUX; i++){
+        printf("Aux %d:",i);
+        plprint(plists->data + i);
+    }
 
     gettimeofday(&start, NULL);
     for (int i = 0; i < N_AUX; i++){
@@ -123,13 +138,26 @@ int main(int argc, char *argv[]){
             wait(&estado);
         }
         gettimeofday(&stop, NULL);
-        printf("Tempo de turnaround: %lf segundos\n", ((stop.tv_sec - start.tv_sec)*1e6 + (stop.tv_usec - start.tv_usec))/1e6);
+
+        for(int i = 0; i < N_AUX; i++){
+            printf("Aux %d:",i);
+            plprint(plists->data + i);
+        }
+
+        shmctl(idshm, IPC_RMID, NULL);
+
+        printf("Tempo de turnaround: %lf segundos\n",
+               ((stop.tv_sec - start.tv_sec)*1e6
+                + (stop.tv_usec - start.tv_usec))/1e6);
     }
-    else if (mode == NORMAL) {
-        plexc(plists.data + p_aux_id, p_aux_id);
-    }
-    else if (mode == WORK_STEALING){
-        plexcws(plists.data + p_aux_id, p_aux_id);
+    else {
+        if (mode == NORMAL) 
+            plexc(plists->data + p_aux_id, p_aux_id);
+
+        if (mode == WORK_STEALING)
+            plexcws(plists->data + p_aux_id, p_aux_id);
+
+        shmdt(plists); // detach da memória compartilhada
     }
 
     return 0;
@@ -173,25 +201,40 @@ void plinsert(process_list_t* plist, process_t* p){
     plist->size++;
 }
 
+void plremove(process_list_t* plist){
+
+    process_t* p = NULL;
+    if (!plist || plist->size == 0)
+        return;
+
+    p = plist->front;
+    plist->front = p->next;
+
+    if(!plist->front)
+        plist->back = NULL;
+
+    plist->size--;
+
+    free(p);
+}
+
 void plprint(process_list_t* plist){
 
     process_t* current = plist->front;
 
-    printf("\n------\n");
     printf("Lista contém %d elementos\n", plist->size);
     while(current){
         printf("%s ", current->name);
         current=current->next;
     }
+    printf("\n");
 }
 
 int plexc(process_list_t* plist, int p_aux_id){
-    process_t* current = plist->front;
 
-    while(current){
-
-        pexc(current, p_aux_id);
-        current=current->next;
+    while(plist->front){
+        pexc(plist->front, p_aux_id);
+        plremove(plist);
     }
 
     return 0;
@@ -239,3 +282,4 @@ void preproc_line(char* line){
     if (len > 0 && line[len-1] == '\n')
         line[len-1] = '\0';
 }
+
