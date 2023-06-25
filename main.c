@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -8,6 +9,7 @@
 #include <string.h>
 #include <sys/sem.h>
 #include <errno.h>
+#include <time.h>
 
 
 #define TAM_WORD  10
@@ -32,28 +34,23 @@ typedef struct {
 
 struct sembuf operacao [2];
 int idsem;
-int quem=0;
-int semval;
 
-void p_sem(){
+void p_sem(int sem_num){
 
-    semval = semctl(idsem, 0, GETVAL);         // Obtenha o valor do semáforo
-
-    operacao[0].sem_num = 0;
+    operacao[0].sem_num = sem_num;
     operacao[0].sem_op = 0;
     operacao[0].sem_flg = 0;
 
-    operacao[1].sem_num = 0;
+    operacao[1].sem_num = sem_num;
     operacao[1].sem_op = 1;
     operacao[1].sem_flg = 0;
+
     if (semop(idsem, operacao, 2) < 0)
             printf("erro no p=%d\n", errno);
-
-    semval = semctl(idsem, 0, GETVAL);         // Obtenha o valor do semáforo
 }
 
-void v_sem(){
-    operacao[0].sem_num = 0;
+void v_sem(int sem_num){
+    operacao[0].sem_num = sem_num;
     operacao[0].sem_op = -1;
     operacao[0].sem_flg = 0;
     if (semop(idsem, operacao, 1) < 0)
@@ -127,7 +124,7 @@ int main(int argc, char *argv[]){
         return 1;
 	}
 
-    if((idsem = semget(0x1223, 1, IPC_CREAT | 0x1ff)) < 0){
+    if((idsem = semget(0x1223, N_AUX , IPC_CREAT | 0x1ff)) < 0){
         printf("erro na criação do semáforo\n");
         exit(1);
     }
@@ -173,12 +170,18 @@ int main(int argc, char *argv[]){
         }
         gettimeofday(&stop, NULL);
 
-        // for(int i = 0; i < N_AUX; i++){
-        //     printf("Aux %d:",i);
-        //     plprint(plists->data + i);
-        // }
+        // remove memória compartilhada
+        if (shmctl(idshm, IPC_RMID, NULL) < 0){
+            printf("Erro na remoção da memória compartilhada\n");
+            return 1;
+        }
 
-        shmctl(idshm, IPC_RMID, NULL);
+        // remove conjunto de semáforos
+
+        if (semctl(idsem, 0, IPC_RMID) < 0){
+            printf("Erro na remoção do conjunto de semáforos\n");
+            return 1;
+        }
 
         printf("Tempo de turnaround: %lf segundos\n",
                ((stop.tv_sec - start.tv_sec)*1e6
@@ -279,7 +282,6 @@ int pexc(process_t* p, int p_aux_id){
 
     int state;
 
-    printf("Aux %d:Executando %s\n",p_aux_id, p->name);
     pid_t pid = fork();
 
     if (pid < 0){
@@ -288,18 +290,20 @@ int pexc(process_t* p, int p_aux_id){
     }
 
     if(pid == 0){
-        printf("%s",p->name);
         execl(p->name, p->name, NULL);
         print_error("Não foi possível executar o processo");
         return -1;
     }
 
+    printf("Aux %d (%d):Executando %s\n",p_aux_id, pid,p->name);
 
     wait(&state);
 
     return 0;
 
 }
+
+
 
 int plexcws(process_list_array_t* plists, int p_aux_id){
 
@@ -308,63 +312,90 @@ int plexcws(process_list_array_t* plists, int p_aux_id){
     int cont = 0;
     process_list_t* plist = plists->data +p_aux_id;
     while(1){
-        p_sem();
-        process_t* p = (plist->front);
-        if (p) {
-            plremove(plist);
-        } else {
-            v_sem();
+        p_sem(p_aux_id);
+
+        if(!plist->front) {
+            v_sem(p_aux_id);
             break;
         }
-        v_sem();
-        pexc(p, p_aux_id);
+
+        process_t p = *(plist->front);
+
+        plremove(plist);
+        v_sem(p_aux_id);
+        pexc(&p, p_aux_id);
         cont++;
     }
 
     printf("Aux %d terminou sua fila! (Executou %d)\n", p_aux_id, cont);
 
-    //escolher qual lista vai acessar
-
-    // process_t pchosen;
+    process_t pchosen;
     
-    // while ((pchosen = steal(plists)).name ) {
-    //     printf("Aux %d executando %s!\n", p_aux_id, pchosen.name);
-    //     pexc(&pchosen, p_aux_id);
-    // }
+    while (1) {
+        pchosen = steal(plists);
 
-    // nao deixar mais niguem acessar
-
-    // olhar as outras listas
+        if(strcmp(pchosen.name, "empty") == 0) break;
+        pexc(&pchosen, p_aux_id);
+    }
 
     return 0;
 }
 
+int choose_list(int limit) {
+
+    time_t t;
+    
+    srand((unsigned) time(&t));
+    
+    return rand() % limit;
+}
+
 process_t steal(process_list_array_t* plists){
 
-    int  tam, id_fila= -1;
-    
-    p_sem();
+    int tam, id_fila;
+    int fila_ids[] = {0, 1, 2, 3};
+    int achou = 0;
+    int cont = 0;
+    process_t p;
 
-    printf("---------------------\n");
-    for (int i = 0 ; i < N_AUX; i++){
-        tam = (plists->data + i)->size;
-        printf("Tam da lista %d: %d\n",i, tam);
+    int limit = 4;
+    while (limit){
+
+        id_fila = fila_ids[choose_list(limit)];
+        cont++;
+
+        p_sem(id_fila);
+
+        tam = (plists->data + id_fila)->size;
+
         if (tam){
-            id_fila = i;
-            // break;
+            achou = 1;
+            break;
         }
+        v_sem(id_fila);
+
+        int aux = fila_ids[limit-1];
+        fila_ids[limit-1] = fila_ids[id_fila];
+        fila_ids[id_fila] = aux;
+        limit--;
     }
-    
+
+    printf("gerei %d números\n", cont);
+
+    if (!achou) {
+        strcpy(p.name, "empty");
+        return p;
+    }
+
     printf("Roubando de %d\n", id_fila);
     process_list_t *plist = plists-> data + id_fila;
-    process_t p = *(plist->front);
+    p = *(plist->front);
     plremove(plist);
 
-    v_sem();
+    v_sem(id_fila);
 
     return p;
 }
-
 
 void print_error(char* error_msg){
     printf("\033[31mErro:\033[0m");
