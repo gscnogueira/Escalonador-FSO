@@ -1,16 +1,14 @@
-
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <time.h>
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/ipc.h>
-#include<sys/shm.h>
-#include <string.h>
+#include <sys/shm.h>
 #include <sys/sem.h>
-#include <errno.h>
-#include <time.h>
-
 
 #define TAM_WORD  10
 #define TAM_LINHA 100
@@ -35,29 +33,11 @@ typedef struct {
 struct sembuf operacao [2];
 int idsem;
 
-void p_sem(int sem_num){
+void p_sem(int sem_num);
 
-    operacao[0].sem_num = sem_num;
-    operacao[0].sem_op = 0;
-    operacao[0].sem_flg = 0;
+void v_sem(int sem_num);
 
-    operacao[1].sem_num = sem_num;
-    operacao[1].sem_op = 1;
-    operacao[1].sem_flg = 0;
-
-    if (semop(idsem, operacao, 2) < 0)
-            printf("erro no p=%d\n", errno);
-}
-
-void v_sem(int sem_num){
-    operacao[0].sem_num = sem_num;
-    operacao[0].sem_op = -1;
-    operacao[0].sem_flg = 0;
-    if (semop(idsem, operacao, 1) < 0)
-            printf("erro no p=%d\n", errno);
-}
-
-process_t steal(process_list_array_t* plists);
+process_t steal(process_list_array_t* plists, int p_aux_id);
 
 void preproc_line(char* line);
 
@@ -201,6 +181,28 @@ int main(int argc, char *argv[]){
     return 0;
 }
 
+void p_sem(int sem_num){
+
+    operacao[0].sem_num = sem_num;
+    operacao[0].sem_op = 0;
+    operacao[0].sem_flg = 0;
+
+    operacao[1].sem_num = sem_num;
+    operacao[1].sem_op = 1;
+    operacao[1].sem_flg = 0;
+
+    if (semop(idsem, operacao, 2) < 0)
+            printf("erro no p=%d\n", errno);
+}
+
+void v_sem(int sem_num){
+    operacao[0].sem_num = sem_num;
+    operacao[0].sem_op = -1;
+    operacao[0].sem_flg = 0;
+    if (semop(idsem, operacao, 1) < 0)
+            printf("erro no p=%d\n", errno);
+}
+
 process_t* pinit(char* p_name){
 
     process_t* p = malloc(sizeof(process_t));
@@ -295,7 +297,7 @@ int pexc(process_t* p, int p_aux_id){
         return -1;
     }
 
-    printf("Aux %d (%d):Executando %s\n",p_aux_id, pid,p->name);
+    printf("Aux %d (%d): Executando %s\n", p_aux_id, pid,p->name);
 
     wait(&state);
 
@@ -303,15 +305,16 @@ int pexc(process_t* p, int p_aux_id){
 
 }
 
-
-
 int plexcws(process_list_array_t* plists, int p_aux_id){
 
-    // Função para executar work stealing
+    // função para executar work stealing
 
     int cont = 0;
     process_list_t* plist = plists->data +p_aux_id;
     while(1){
+        // checa se a lista do processo está vazia
+        // se não, pega o processo da lista, remove e executa
+        // se sim, segue para o roubo de processos
         p_sem(p_aux_id);
 
         if(!plist->front) {
@@ -327,12 +330,13 @@ int plexcws(process_list_array_t* plists, int p_aux_id){
         cont++;
     }
 
-    printf("Aux %d terminou sua fila! (Executou %d)\n", p_aux_id, cont);
+    printf("\nAux %d terminou sua fila! (Executou %d processos)\n\n", p_aux_id, cont);
 
     process_t pchosen;
     
     while (1) {
-        pchosen = steal(plists);
+        // tenta roubar processo até um processo vazio ser retornado
+        pchosen = steal(plists, p_aux_id);
 
         if(strcmp(pchosen.name, "empty") == 0) break;
         pexc(&pchosen, p_aux_id);
@@ -342,6 +346,7 @@ int plexcws(process_list_array_t* plists, int p_aux_id){
 }
 
 int choose_list(int limit) {
+    // gera um índice aleatório
 
     time_t t;
     
@@ -350,17 +355,18 @@ int choose_list(int limit) {
     return rand() % limit;
 }
 
-process_t steal(process_list_array_t* plists){
+process_t steal(process_list_array_t* plists, int p_aux_id){
+    // rouba e retorna um processo, sem executá-lo
 
     int tam, id_fila;
     int fila_ids[] = {0, 1, 2, 3};
-    int achou = 0;
+    int found = 0;
     int cont = 0;
     process_t p;
+    int limit = N_AUX;
 
-    int limit = 4;
     while (limit){
-
+        // checa todas as listas para ver se há processo para ser roubado
         id_fila = fila_ids[choose_list(limit)];
         cont++;
 
@@ -369,7 +375,8 @@ process_t steal(process_list_array_t* plists){
         tam = (plists->data + id_fila)->size;
 
         if (tam){
-            achou = 1;
+            // se tem processo para ser roubado (lista com tamanho maior que 0), não dá v_sem e segue para a remoção do processo
+            found = 1;
             break;
         }
         v_sem(id_fila);
@@ -380,18 +387,18 @@ process_t steal(process_list_array_t* plists){
         limit--;
     }
 
-    printf("gerei %d números\n", cont);
-
-    if (!achou) {
+    if (!found) {
+        // se não tem processo para ser roubado, apenas retorna
         strcpy(p.name, "empty");
         return p;
     }
 
-    printf("Roubando de %d\n", id_fila);
+    printf("Aux %d roubando da fila de Aux %d!\n", p_aux_id, id_fila);
     process_list_t *plist = plists-> data + id_fila;
     p = *(plist->front);
     plremove(plist);
 
+    // com o processo já removido, libera o semáforo da lista
     v_sem(id_fila);
 
     return p;
